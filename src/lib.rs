@@ -15,6 +15,7 @@ pub struct Jlogger {
     log_console: bool,
     log_file: Option<RwLock<File>>,
     log_mark: bool,
+    mark: String,
     log_time: bool,
     time_format: LogTimeFormat,
     start: SystemTime,
@@ -42,16 +43,7 @@ impl Log for Jlogger {
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
             let nanos = self.start.elapsed().unwrap().as_nanos();
-            let mark = std::env::var("JLOGGER_MARK").unwrap_or_else(|_| {
-                let exe_cmd = std::env::current_exe().unwrap();
-                exe_cmd
-                    .as_path()
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .to_string()
-            });
+            let mark = std::env::var("JLOGGER_MARK").unwrap_or(self.mark.clone());
 
             let log_mark = self.log_mark && !mark.trim().is_empty();
 
@@ -71,7 +63,7 @@ impl Log for Jlogger {
                 log_message.push_str(format!("{} ", mark).as_str());
             }
 
-            log_message.push_str(format!("{}", record.args()).as_str());
+            log_message.push_str(format!(": {}", record.args()).as_str());
 
             if self.log_console {
                 println!("{}", log_message);
@@ -92,6 +84,7 @@ pub struct JloggerBuilder {
     log_console: bool,
     log_file: Option<RwLock<File>>,
     log_mark: bool,
+    mark: String,
     log_time: bool,
     time_format: LogTimeFormat,
 }
@@ -113,17 +106,27 @@ impl JloggerBuilder {
     ///     JloggerBuilder::new()
     ///        .max_level(LevelFilter::Debug)
     ///        .log_console(true)
-    ///        .log_mark(true)
+    ///        .log_mark(true, Some("Mark"))
     ///        .log_file("/tmp/mylog.log")
     ///        .build();
     ///
     /// ```
     pub fn new() -> Self {
+        let exe_cmd = std::env::current_exe().unwrap();
+        let mark = exe_cmd
+            .as_path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
         JloggerBuilder {
             max_level: LevelFilter::Info,
             log_console: true,
             log_file: None,
             log_mark: false,
+            mark,
             log_time: true,
             time_format: LogTimeFormat::TimeStamp,
         }
@@ -162,8 +165,11 @@ impl JloggerBuilder {
     /// If enabled, a mark string will be printed together with the log message.
     /// By default, the mark string is set to the process name, it can be specifed though
     /// "JLOGGER_MARK" environment variable.
-    pub fn log_mark(mut self, log_mark: bool) -> Self {
+    pub fn log_mark(mut self, log_mark: bool, mark: Option<&str>) -> Self {
         self.log_mark = log_mark;
+        if let Some(m) = mark {
+            self.mark = m.to_string();
+        }
         self
     }
 
@@ -186,6 +192,7 @@ impl JloggerBuilder {
             log_console: self.log_console,
             log_file: self.log_file.take(),
             log_mark: self.log_mark,
+            mark: self.mark,
             log_time: self.log_time,
             time_format: self.time_format,
             start: SystemTime::now(),
@@ -311,7 +318,8 @@ fn test_debug_macro() {
     JloggerBuilder::new()
         .max_level(LevelFilter::Debug)
         .log_console(true)
-        .log_mark(true)
+        .log_mark(true, Some("test_debug_macro"))
+        .log_time(true)
         .log_file("/tmp/abc")
         .build();
 
@@ -321,7 +329,6 @@ fn test_debug_macro() {
     jerror!("this is error");
     jinfo!("this is info");
     info!("this is info");
-    std::thread::sleep_ms(5000);
     jdebug!();
     debug!("default");
 }
