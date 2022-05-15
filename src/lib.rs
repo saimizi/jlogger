@@ -1,15 +1,23 @@
 //! A simple log utility.
 
-
 use log::{self, LevelFilter, Log, Metadata, Record};
 use std::fs::{self, File};
 use std::io::Write;
+use std::os::unix::thread;
 use std::sync::RwLock;
+use std::time::SystemTime;
+
+pub enum LogTimeFormat {
+    TimeStamp,
+}
 
 pub struct Jlogger {
     log_console: bool,
     log_file: Option<RwLock<File>>,
     log_mark: bool,
+    log_time: bool,
+    time_format: LogTimeFormat,
+    start: SystemTime,
 }
 
 impl Log for Jlogger {
@@ -33,7 +41,7 @@ impl Log for Jlogger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            let mut log_message = format!("{}: {}", record.level(), record.args());
+            let nanos = self.start.elapsed().unwrap().as_nanos();
             let mark = std::env::var("JLOGGER_MARK").unwrap_or_else(|_| {
                 let exe_cmd = std::env::current_exe().unwrap();
                 exe_cmd
@@ -47,9 +55,23 @@ impl Log for Jlogger {
 
             let log_mark = self.log_mark && !mark.trim().is_empty();
 
-            if log_mark {
-                log_message = format!("{}: <{}> {}", record.level(), mark, record.args(),)
+            let mut log_message = String::new();
+
+            if self.log_time {
+                match self.time_format {
+                    LogTimeFormat::TimeStamp => log_message.push_str(
+                        format!("{:<05}.{:<9} ", nanos / 1000000000, nanos % 1000000000).as_str(),
+                    ),
+                }
             }
+
+            log_message.push_str(format!("{:5} ", record.level()).as_str());
+
+            if log_mark {
+                log_message.push_str(format!("{} ", mark).as_str());
+            }
+
+            log_message.push_str(format!("{}", record.args()).as_str());
 
             if self.log_console {
                 println!("{}", log_message);
@@ -70,6 +92,8 @@ pub struct JloggerBuilder {
     log_console: bool,
     log_file: Option<RwLock<File>>,
     log_mark: bool,
+    log_time: bool,
+    time_format: LogTimeFormat,
 }
 
 impl Default for JloggerBuilder {
@@ -100,6 +124,8 @@ impl JloggerBuilder {
             log_console: true,
             log_file: None,
             log_mark: false,
+            log_time: true,
+            time_format: LogTimeFormat::TimeStamp,
         }
     }
 
@@ -141,12 +167,28 @@ impl JloggerBuilder {
         self
     }
 
+    /// If enabled, a time stamp string will be printed together with the log message.
+    /// Default: enabled.
+    pub fn log_time(mut self, log_time: bool) -> Self {
+        self.log_time = log_time;
+        self
+    }
+
+    /// Time stamp string format, only take effect when time stamp is enable in the log.
+    pub fn log_time_format(mut self, time_format: LogTimeFormat) -> Self {
+        self.time_format = time_format;
+        self
+    }
+
     /// Build a Jlogger.
     pub fn build(mut self) {
         let logger = Box::new(Jlogger {
             log_console: self.log_console,
             log_file: self.log_file.take(),
             log_mark: self.log_mark,
+            log_time: self.log_time,
+            time_format: self.time_format,
+            start: SystemTime::now(),
         });
 
         log::set_max_level(self.max_level);
@@ -279,6 +321,7 @@ fn test_debug_macro() {
     jerror!("this is error");
     jinfo!("this is info");
     info!("this is info");
+    std::thread::sleep_ms(5000);
     jdebug!();
     debug!("default");
 }
