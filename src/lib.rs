@@ -2,13 +2,12 @@
 
 use log::{self, LevelFilter, Log, Metadata, Record};
 use std::fs::{self, File};
-use std::io::Write;
-use std::os::unix::thread;
+use std::io::{BufRead, BufReader, Write};
 use std::sync::RwLock;
-use std::time::SystemTime;
 
 pub enum LogTimeFormat {
     TimeStamp,
+    TimeLocal,
 }
 
 pub struct Jlogger {
@@ -18,7 +17,7 @@ pub struct Jlogger {
     mark: String,
     log_time: bool,
     time_format: LogTimeFormat,
-    start: SystemTime,
+    system_start: i64,
 }
 
 impl Log for Jlogger {
@@ -42,18 +41,27 @@ impl Log for Jlogger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            let nanos = self.start.elapsed().unwrap().as_nanos();
-            let mark = std::env::var("JLOGGER_MARK").unwrap_or(self.mark.clone());
+            let mark = std::env::var("JLOGGER_MARK").unwrap_or_else(|_| self.mark.clone());
 
             let log_mark = self.log_mark && !mark.trim().is_empty();
 
             let mut log_message = String::new();
 
             if self.log_time {
+                let now = chrono::Local::now();
                 match self.time_format {
-                    LogTimeFormat::TimeStamp => log_message.push_str(
-                        format!("{:<05}.{:<9} ", nanos / 1000000000, nanos % 1000000000).as_str(),
-                    ),
+                    LogTimeFormat::TimeStamp => log_message.push_str({
+                        format!(
+                            "{}.{:<09} ",
+                            now.timestamp() - self.system_start,
+                            now.timestamp_nanos() % 1000000000
+                        )
+                        .as_str()
+                    }),
+                    LogTimeFormat::TimeLocal => log_message.push_str({
+                        let now = chrono::Local::now();
+                        format!("{} ", now.format("%Y-%m-%d %H:%M:%S")).as_str()
+                    }),
                 }
             }
 
@@ -101,12 +109,14 @@ impl JloggerBuilder {
     /// # Examples
     /// ```
     ///     use log::LevelFilter;
-    ///     use jlogger::JloggerBuilder;
+    ///     use jlogger::{JloggerBuilder, LogTimeFormat};
     ///
     ///     JloggerBuilder::new()
     ///        .max_level(LevelFilter::Debug)
     ///        .log_console(true)
     ///        .log_mark(true, Some("Mark"))
+    ///        .log_time(true)
+    ///        .log_time_format(LogTimeFormat::TimeStamp)
     ///        .log_file("/tmp/mylog.log")
     ///        .build();
     ///
@@ -181,6 +191,14 @@ impl JloggerBuilder {
     }
 
     /// Time stamp string format, only take effect when time stamp is enable in the log.
+    /// * TimeStamp  
+    /// Timestamp (from system boot) will be outputed in the log message.
+    /// > 9080.163365118 DEBUG test_debug_macro : src/lib.rs-364 : this is debug  
+    /// > 9083.164066687 INFO  test_debug_macro : this is info
+    /// * TimeLocal  
+    /// Date and time are printed in the log message.  
+    /// > 2022-05-17 13:00:03 DEBUG test_debug_macro : src/lib.rs-363 : this is debug  
+    /// > 2022-05-17 13:00:06 INFO  test_debug_macro : this is info
     pub fn log_time_format(mut self, time_format: LogTimeFormat) -> Self {
         self.time_format = time_format;
         self
@@ -188,6 +206,33 @@ impl JloggerBuilder {
 
     /// Build a Jlogger.
     pub fn build(mut self) {
+        let now = chrono::Local::now().timestamp();
+        let system_start = {
+            if let Ok(f) = fs::OpenOptions::new()
+                .create(false)
+                .write(false)
+                .read(true)
+                .open("/proc/stat")
+            {
+                let mut br = BufReader::new(f);
+                loop {
+                    let mut buf = String::new();
+                    if let Ok(n) = br.read_line(&mut buf) {
+                        if n == 0 {
+                            break now;
+                        }
+
+                        if buf.starts_with("btime") {
+                            let v: Vec<&str> = buf.split_whitespace().into_iter().collect();
+                            break v[1].parse::<i64>().unwrap();
+                        }
+                    }
+                }
+            } else {
+                now
+            }
+        };
+
         let logger = Box::new(Jlogger {
             log_console: self.log_console,
             log_file: self.log_file.take(),
@@ -195,7 +240,7 @@ impl JloggerBuilder {
             mark: self.mark,
             log_time: self.log_time,
             time_format: self.time_format,
-            start: SystemTime::now(),
+            system_start,
         });
 
         log::set_max_level(self.max_level);
@@ -320,6 +365,7 @@ fn test_debug_macro() {
         .log_console(true)
         .log_mark(true, Some("test_debug_macro"))
         .log_time(true)
+        .log_time_format(LogTimeFormat::TimeLocal)
         .log_file("/tmp/abc")
         .build();
 
