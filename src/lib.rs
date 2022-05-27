@@ -3,6 +3,7 @@
 use log::{self, LevelFilter, Log, Metadata, Record};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
+use std::sync::Arc;
 use std::sync::RwLock;
 
 pub enum LogTimeFormat {
@@ -10,14 +11,48 @@ pub enum LogTimeFormat {
     TimeLocal,
 }
 
+pub enum MarkType {
+    MarkUser(String),
+    MarkDefault,
+    MarkNone,
+}
+
+pub struct JlogCtrl {
+    mark: Arc<RwLock<MarkType>>,
+}
+
+impl JlogCtrl {
+    pub fn mark(&self, mark: MarkType) {
+        let mut mw = self.mark.write().unwrap();
+        *mw = mark;
+    }
+}
+
 pub struct Jlogger {
     log_console: bool,
     log_file: Option<RwLock<File>>,
-    log_mark: bool,
-    mark: String,
+    mark: Arc<RwLock<MarkType>>,
     log_time: bool,
     time_format: LogTimeFormat,
     system_start: i64,
+}
+
+impl Jlogger {
+    fn default_mark() -> String {
+        std::thread::current()
+            .name()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                let exe_cmd = std::env::current_exe().unwrap();
+                exe_cmd
+                    .as_path()
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string()
+            })
+    }
 }
 
 impl Log for Jlogger {
@@ -41,10 +76,14 @@ impl Log for Jlogger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            let mark = std::env::var("JLOGGER_MARK").unwrap_or_else(|_| self.mark.clone());
-
-            let log_mark = self.log_mark && !mark.trim().is_empty();
-
+            let mark = std::env::var("JLOGGER_MARK").unwrap_or_else(|_| {
+                let mr = self.mark.read().unwrap();
+                match *mr {
+                    MarkType::MarkUser(ref s) => s.clone(),
+                    MarkType::MarkDefault => Jlogger::default_mark(),
+                    MarkType::MarkNone => String::new(),
+                }
+            });
             let mut log_message = String::new();
 
             if self.log_time {
@@ -67,7 +106,7 @@ impl Log for Jlogger {
 
             log_message.push_str(format!("{:5} ", record.level()).as_str());
 
-            if log_mark {
+            if !mark.trim().is_empty() {
                 log_message.push_str(format!("{} ", mark).as_str());
             }
 
@@ -91,8 +130,7 @@ pub struct JloggerBuilder {
     max_level: LevelFilter,
     log_console: bool,
     log_file: Option<RwLock<File>>,
-    log_mark: bool,
-    mark: String,
+    mark: MarkType,
     log_time: bool,
     time_format: LogTimeFormat,
 }
@@ -114,7 +152,6 @@ impl JloggerBuilder {
     ///     JloggerBuilder::new()
     ///        .max_level(LevelFilter::Debug)
     ///        .log_console(true)
-    ///        .log_mark(true, Some("Mark"))
     ///        .log_time(true)
     ///        .log_time_format(LogTimeFormat::TimeStamp)
     ///        .log_file("/tmp/mylog.log")
@@ -122,21 +159,11 @@ impl JloggerBuilder {
     ///
     /// ```
     pub fn new() -> Self {
-        let exe_cmd = std::env::current_exe().unwrap();
-        let mark = exe_cmd
-            .as_path()
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
-
         JloggerBuilder {
             max_level: LevelFilter::Info,
             log_console: true,
             log_file: None,
-            log_mark: false,
-            mark,
+            mark: MarkType::MarkNone,
             log_time: true,
             time_format: LogTimeFormat::TimeStamp,
         }
@@ -172,17 +199,6 @@ impl JloggerBuilder {
         self
     }
 
-    /// If enabled, a mark string will be printed together with the log message.
-    /// By default, the mark string is set to the process name, it can be specifed though
-    /// "JLOGGER_MARK" environment variable.
-    pub fn log_mark(mut self, log_mark: bool, mark: Option<&str>) -> Self {
-        self.log_mark = log_mark;
-        if let Some(m) = mark {
-            self.mark = m.to_string();
-        }
-        self
-    }
-
     /// If enabled, a time stamp string will be printed together with the log message.
     /// Default: enabled.
     pub fn log_time(mut self, log_time: bool) -> Self {
@@ -197,15 +213,25 @@ impl JloggerBuilder {
     /// > 9083.164066687 INFO  test_debug_macro : this is info
     /// * TimeLocal  
     /// Date and time are printed in the log message.  
-    /// > 2022-05-17 13:00:03 DEBUG test_debug_macro : src/lib.rs-363 : this is debug  
-    /// > 2022-05-17 13:00:06 INFO  test_debug_macro : this is info
+    /// > 2022-05-17 13:00:03 DEBUG : src/lib.rs-363 : this is debug  
+    /// > 2022-05-17 13:00:06 INFO  : this is info
     pub fn log_time_format(mut self, time_format: LogTimeFormat) -> Self {
         self.time_format = time_format;
         self
     }
 
+    /// By default, no mark message is used, this function sets a mark for log message.
+    /// If mark is set to None, the name of the process is used like follow:
+    ///
+    /// > 2022-05-27 08:51:29 INFO  jlogger-cac0970c6f073082 : this is info
+    ///
+    pub fn mark(mut self, mark: MarkType) -> Self {
+        self.mark = mark;
+        self
+    }
+
     /// Build a Jlogger.
-    pub fn build(mut self) {
+    pub fn build(mut self) -> JlogCtrl {
         let now = chrono::Local::now().timestamp();
         let system_start = {
             if let Ok(f) = fs::OpenOptions::new()
@@ -233,11 +259,12 @@ impl JloggerBuilder {
             }
         };
 
+        let mark = Arc::new(RwLock::new(self.mark));
+        let mark_cpy = mark.clone();
         let logger = Box::new(Jlogger {
             log_console: self.log_console,
             log_file: self.log_file.take(),
-            log_mark: self.log_mark,
-            mark: self.mark,
+            mark,
             log_time: self.log_time,
             time_format: self.time_format,
             system_start,
@@ -245,6 +272,8 @@ impl JloggerBuilder {
 
         log::set_max_level(self.max_level);
         log::set_boxed_logger(logger).unwrap();
+
+        JlogCtrl { mark: mark_cpy }
     }
 }
 
@@ -360,21 +389,47 @@ macro_rules! jdebug {
 fn test_debug_macro() {
     use log::{debug, info};
 
-    JloggerBuilder::new()
+    let jctl = JloggerBuilder::new()
         .max_level(LevelFilter::Debug)
         .log_console(true)
-        .log_mark(true, Some("test_debug_macro"))
         .log_time(true)
         .log_time_format(LogTimeFormat::TimeLocal)
         .log_file("/tmp/abc")
         .build();
 
     jdebug!("test: {}", String::from("hello"));
+    jctl.mark(MarkType::MarkDefault);
     jdebug!("this is debug");
-    jwarn!("this is warn");
+
+    std::thread::Builder::new()
+        .name("thread1".to_string())
+        .spawn(|| {
+            log::debug!(
+                "this is debug in the thread {}.",
+                std::thread::current().name().unwrap()
+            );
+            jinfo!("this is info in the thread.");
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+
+    jctl.mark(MarkType::MarkUser("CustomMark1".to_string()));
     jerror!("this is error");
+    jctl.mark(MarkType::MarkUser("CustomMark2".to_string()));
     jinfo!("this is info");
+    jctl.mark(MarkType::MarkDefault);
+    std::thread::spawn(|| {
+        log::debug!(
+            "this is debug in the thread {}.",
+            std::thread::current().name().unwrap_or("No thread name set"),
+        );
+        jinfo!("this is info in the thread.");
+    })
+    .join()
+    .unwrap();
     info!("this is info");
+    jctl.mark(MarkType::MarkNone);
     jdebug!();
     debug!("default");
 }
