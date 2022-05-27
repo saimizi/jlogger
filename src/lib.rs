@@ -173,6 +173,14 @@ impl JloggerBuilder {
         self
     }
 
+    /// Add runtime infomation to log message.
+    /// If the current thread name is set, it will be used as runtime information, otherwise
+    /// process name is used
+    ///
+    /// >DEBUG thread1 : logging from thread thread1.  
+    /// >DEBUG jlogger-cac0970c6f073082 : logging from a thread whose name is not set.
+    ///
+    ///
     pub fn log_runtime(mut self, log_time: bool) -> Self {
         self.log_runtime = log_time;
         self
