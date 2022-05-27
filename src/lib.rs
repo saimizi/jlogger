@@ -3,7 +3,6 @@
 use log::{self, LevelFilter, Log, Metadata, Record};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
-use std::sync::Arc;
 use std::sync::RwLock;
 
 pub enum LogTimeFormat {
@@ -11,26 +10,9 @@ pub enum LogTimeFormat {
     TimeLocal,
 }
 
-pub enum MarkType {
-    MarkUser(String),
-    MarkNone,
-}
-
-pub struct JlogCtrl {
-    mark: Arc<RwLock<MarkType>>,
-}
-
-impl JlogCtrl {
-    pub fn mark(&self, mark: MarkType) {
-        let mut mw = self.mark.write().unwrap();
-        *mw = mark;
-    }
-}
-
 pub struct Jlogger {
     log_console: bool,
     log_file: Option<RwLock<File>>,
-    mark: Arc<RwLock<MarkType>>,
     log_runtime: bool,
     log_time: bool,
     time_format: LogTimeFormat,
@@ -76,13 +58,6 @@ impl Log for Jlogger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            let mark = std::env::var("JLOGGER_MARK").unwrap_or_else(|_| {
-                let mr = self.mark.read().unwrap();
-                match *mr {
-                    MarkType::MarkUser(ref s) => s.clone(),
-                    MarkType::MarkNone => String::new(),
-                }
-            });
             let mut log_message = String::new();
 
             if self.log_time {
@@ -109,10 +84,6 @@ impl Log for Jlogger {
                 log_message.push_str(format!("{} ", Jlogger::runtime()).as_str());
             }
 
-            if !mark.trim().is_empty() {
-                log_message.push_str(format!("<{}> ", mark).as_str());
-            }
-
             log_message.push_str(format!(": {}", record.args()).as_str());
 
             if self.log_console {
@@ -134,7 +105,6 @@ pub struct JloggerBuilder {
     log_console: bool,
     log_file: Option<RwLock<File>>,
     log_runtime: bool,
-    mark: MarkType,
     log_time: bool,
     time_format: LogTimeFormat,
 }
@@ -168,7 +138,6 @@ impl JloggerBuilder {
             log_console: true,
             log_file: None,
             log_runtime: false,
-            mark: MarkType::MarkNone,
             log_time: true,
             time_format: LogTimeFormat::TimeStamp,
         }
@@ -230,18 +199,8 @@ impl JloggerBuilder {
         self
     }
 
-    /// By default, no mark message is used, this function sets a mark for log message.
-    /// If mark is set to None, the name of the process is used like follow:
-    ///
-    /// > 2022-05-27 08:51:29 INFO  jlogger-cac0970c6f073082 : this is info
-    ///
-    pub fn mark(mut self, mark: MarkType) -> Self {
-        self.mark = mark;
-        self
-    }
-
     /// Build a Jlogger.
-    pub fn build(mut self) -> JlogCtrl {
+    pub fn build(mut self) {
         let now = chrono::Local::now().timestamp();
         let system_start = {
             if let Ok(f) = fs::OpenOptions::new()
@@ -269,13 +228,10 @@ impl JloggerBuilder {
             }
         };
 
-        let mark = Arc::new(RwLock::new(self.mark));
-        let mark_cpy = mark.clone();
         let logger = Box::new(Jlogger {
             log_console: self.log_console,
             log_file: self.log_file.take(),
             log_runtime: self.log_runtime,
-            mark,
             log_time: self.log_time,
             time_format: self.time_format,
             system_start,
@@ -283,8 +239,6 @@ impl JloggerBuilder {
 
         log::set_max_level(self.max_level);
         log::set_boxed_logger(logger).unwrap();
-
-        JlogCtrl { mark: mark_cpy }
     }
 }
 
@@ -400,7 +354,7 @@ macro_rules! jdebug {
 fn test_debug_macro() {
     use log::{debug, info};
 
-    let jctl = JloggerBuilder::new()
+    JloggerBuilder::new()
         .max_level(LevelFilter::Debug)
         .log_console(true)
         .log_time(true)
@@ -425,9 +379,7 @@ fn test_debug_macro() {
         .join()
         .unwrap();
 
-    jctl.mark(MarkType::MarkUser("CustomMark1".to_string()));
     jerror!("this is error");
-    jctl.mark(MarkType::MarkUser("CustomMark2".to_string()));
     jinfo!("this is info");
     std::thread::spawn(|| {
         log::debug!(
@@ -441,7 +393,6 @@ fn test_debug_macro() {
     .join()
     .unwrap();
     info!("this is info");
-    jctl.mark(MarkType::MarkNone);
     jdebug!();
     debug!("default");
 }
