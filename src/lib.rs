@@ -13,7 +13,6 @@ pub enum LogTimeFormat {
 
 pub enum MarkType {
     MarkUser(String),
-    MarkDefault,
     MarkNone,
 }
 
@@ -32,13 +31,14 @@ pub struct Jlogger {
     log_console: bool,
     log_file: Option<RwLock<File>>,
     mark: Arc<RwLock<MarkType>>,
+    log_runtime: bool,
     log_time: bool,
     time_format: LogTimeFormat,
     system_start: i64,
 }
 
 impl Jlogger {
-    fn default_mark() -> String {
+    fn runtime() -> String {
         std::thread::current()
             .name()
             .map(|s| s.to_string())
@@ -80,7 +80,6 @@ impl Log for Jlogger {
                 let mr = self.mark.read().unwrap();
                 match *mr {
                     MarkType::MarkUser(ref s) => s.clone(),
-                    MarkType::MarkDefault => Jlogger::default_mark(),
                     MarkType::MarkNone => String::new(),
                 }
             });
@@ -106,8 +105,12 @@ impl Log for Jlogger {
 
             log_message.push_str(format!("{:5} ", record.level()).as_str());
 
+            if self.log_runtime {
+                log_message.push_str(format!("{} ", Jlogger::runtime()).as_str());
+            }
+
             if !mark.trim().is_empty() {
-                log_message.push_str(format!("{} ", mark).as_str());
+                log_message.push_str(format!("<{}> ", mark).as_str());
             }
 
             log_message.push_str(format!(": {}", record.args()).as_str());
@@ -130,6 +133,7 @@ pub struct JloggerBuilder {
     max_level: LevelFilter,
     log_console: bool,
     log_file: Option<RwLock<File>>,
+    log_runtime: bool,
     mark: MarkType,
     log_time: bool,
     time_format: LogTimeFormat,
@@ -163,6 +167,7 @@ impl JloggerBuilder {
             max_level: LevelFilter::Info,
             log_console: true,
             log_file: None,
+            log_runtime: false,
             mark: MarkType::MarkNone,
             log_time: true,
             time_format: LogTimeFormat::TimeStamp,
@@ -196,6 +201,11 @@ impl JloggerBuilder {
                 .unwrap(),
         ));
 
+        self
+    }
+
+    pub fn log_runtime(mut self, log_time: bool) -> Self {
+        self.log_runtime = log_time;
         self
     }
 
@@ -264,6 +274,7 @@ impl JloggerBuilder {
         let logger = Box::new(Jlogger {
             log_console: self.log_console,
             log_file: self.log_file.take(),
+            log_runtime: self.log_runtime,
             mark,
             log_time: self.log_time,
             time_format: self.time_format,
@@ -393,12 +404,12 @@ fn test_debug_macro() {
         .max_level(LevelFilter::Debug)
         .log_console(true)
         .log_time(true)
+        .log_runtime(true)
         .log_time_format(LogTimeFormat::TimeLocal)
         .log_file("/tmp/abc")
         .build();
 
     jdebug!("test: {}", String::from("hello"));
-    jctl.mark(MarkType::MarkDefault);
     jdebug!("this is debug");
 
     std::thread::Builder::new()
@@ -418,11 +429,12 @@ fn test_debug_macro() {
     jerror!("this is error");
     jctl.mark(MarkType::MarkUser("CustomMark2".to_string()));
     jinfo!("this is info");
-    jctl.mark(MarkType::MarkDefault);
     std::thread::spawn(|| {
         log::debug!(
             "this is debug in the thread {}.",
-            std::thread::current().name().unwrap_or("No thread name set"),
+            std::thread::current()
+                .name()
+                .unwrap_or("No thread name set"),
         );
         jinfo!("this is info in the thread.");
     })
