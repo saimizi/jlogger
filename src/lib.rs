@@ -87,7 +87,7 @@ impl Log for Jlogger {
             log_message.push_str(format!(": {}", record.args()).as_str());
 
             if self.log_console {
-                println!("{}", log_message);
+                eprintln!("{}", log_message);
             }
 
             if let Some(f) = &self.log_file {
