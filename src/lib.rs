@@ -1,3 +1,5 @@
+//cspell:word  chrono nanos btime
+
 //! A simple log utility.
 
 use log::{self, LevelFilter, Log, Metadata, Record};
@@ -128,7 +130,7 @@ impl JloggerBuilder {
     ///        .log_console(true)
     ///        .log_time(true)
     ///        .log_time_format(LogTimeFormat::TimeStamp)
-    ///        .log_file("/tmp/mylog.log")
+    ///        .log_file("/tmp/my_log.log")
     ///        .build();
     ///
     /// ```
@@ -143,9 +145,9 @@ impl JloggerBuilder {
         }
     }
 
-    /// Set the max level to be outputed.
-    /// Log messages with a level below it will not be outputed.
-    /// At runtime, the log level can be filterred though "JLOGGER_LEVEL" environment variable.
+    /// Set the max level to be outputted.
+    /// Log messages with a level below it will not be outputted.
+    /// At runtime, the log level can be filtered though "JLOGGER_LEVEL" environment variable.
     pub fn max_level(mut self, max_level: LevelFilter) -> Self {
         self.max_level = max_level;
         self
@@ -159,7 +161,7 @@ impl JloggerBuilder {
     }
 
     /// Log file name.
-    /// If specifed, log message will be outputed to it.
+    /// If specified, log message will be outputted to it.
     pub fn log_file(mut self, log_file: &str) -> Self {
         self.log_file = Some(RwLock::new(
             fs::OpenOptions::new()
@@ -173,7 +175,7 @@ impl JloggerBuilder {
         self
     }
 
-    /// Add runtime infomation to log message.
+    /// Add runtime information to log message.
     /// If the current thread name is set, it will be used as runtime information, otherwise
     /// process name is used
     ///
@@ -195,7 +197,7 @@ impl JloggerBuilder {
 
     /// Time stamp string format, only take effect when time stamp is enable in the log.
     /// * TimeStamp  
-    /// Timestamp (from system boot) will be outputed in the log message.
+    /// Timestamp (from system boot) will be outputted in the log message.
     /// > 9080.163365118 DEBUG test_debug_macro : src/lib.rs-364 : this is debug  
     /// > 9083.164066687 INFO  test_debug_macro : this is info
     /// * TimeLocal  
