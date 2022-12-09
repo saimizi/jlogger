@@ -1,5 +1,3 @@
-//cspell:word  chrono nanos btime
-
 //! A simple log utility.
 
 use log::{self, LevelFilter, Log, Metadata, Record};
