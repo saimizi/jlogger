@@ -10,13 +10,13 @@ use std::sync::RwLock;
 pub enum LogTimeFormat {
     TimeStamp,
     TimeLocal,
+    TimeNone,
 }
 
 pub struct Jlogger {
     log_console: bool,
     log_file: Option<RwLock<File>>,
     log_runtime: bool,
-    log_time: bool,
     time_format: LogTimeFormat,
     system_start: i64,
 }
@@ -62,22 +62,21 @@ impl Log for Jlogger {
         if self.enabled(record.metadata()) {
             let mut log_message = String::new();
 
-            if self.log_time {
-                let now = chrono::Local::now();
-                match self.time_format {
-                    LogTimeFormat::TimeStamp => log_message.push_str({
-                        format!(
-                            "{}.{:<09} ",
-                            now.timestamp() - self.system_start,
-                            now.timestamp_nanos() % 1000000000
-                        )
-                        .as_str()
-                    }),
-                    LogTimeFormat::TimeLocal => log_message.push_str({
-                        let now = chrono::Local::now();
-                        format!("{} ", now.format("%Y-%m-%d %H:%M:%S")).as_str()
-                    }),
+            let now = chrono::Local::now();
+            match self.time_format {
+                LogTimeFormat::TimeStamp => log_message.push_str({
+                    format!(
+                        "{}.{:<09} ",
+                        now.timestamp() - self.system_start,
+                        now.timestamp_nanos() % 1000000000
+                    )
+                    .as_str()
+                }),
+                LogTimeFormat::TimeLocal => {
+                    log_message.push_str(format!("{} ", now.format("%Y-%m-%d %H:%M:%S")).as_str())
                 }
+
+                LogTimeFormat::TimeNone => {}
             }
 
             log_message.push_str(format!("{:5} ", record.level()).as_str());
@@ -107,7 +106,6 @@ pub struct JloggerBuilder {
     log_console: bool,
     log_file: Option<RwLock<File>>,
     log_runtime: bool,
-    log_time: bool,
     time_format: LogTimeFormat,
 }
 
@@ -128,8 +126,7 @@ impl JloggerBuilder {
     ///     JloggerBuilder::new()
     ///        .max_level(LevelFilter::Debug)
     ///        .log_console(true)
-    ///        .log_time(true)
-    ///        .log_time_format(LogTimeFormat::TimeStamp)
+    ///        .log_time(LogTimeFormat::TimeStamp)
     ///        .log_file("/tmp/my_log.log")
     ///        .build();
     ///
@@ -140,8 +137,7 @@ impl JloggerBuilder {
             log_console: true,
             log_file: None,
             log_runtime: false,
-            log_time: true,
-            time_format: LogTimeFormat::TimeStamp,
+            time_format: LogTimeFormat::TimeNone,
         }
     }
 
@@ -183,15 +179,8 @@ impl JloggerBuilder {
     /// >DEBUG jlogger-cac0970c6f073082 : logging from a thread whose name is not set.
     ///
     ///
-    pub fn log_runtime(mut self, log_time: bool) -> Self {
-        self.log_runtime = log_time;
-        self
-    }
-
-    /// If enabled, a time stamp string will be printed together with the log message.
-    /// Default: enabled.
-    pub fn log_time(mut self, log_time: bool) -> Self {
-        self.log_time = log_time;
+    pub fn log_runtime(mut self, log_runtime: bool) -> Self {
+        self.log_runtime = log_runtime;
         self
     }
 
@@ -204,7 +193,9 @@ impl JloggerBuilder {
     /// Date and time are printed in the log message.  
     /// > 2022-05-17 13:00:03 DEBUG : src/lib.rs-363 : this is debug  
     /// > 2022-05-17 13:00:06 INFO  : this is info
-    pub fn log_time_format(mut self, time_format: LogTimeFormat) -> Self {
+    /// * TimeNone
+    /// No timestamp included in the log message.
+    pub fn log_time(mut self, time_format: LogTimeFormat) -> Self {
         self.time_format = time_format;
         self
     }
@@ -242,7 +233,6 @@ impl JloggerBuilder {
             log_console: self.log_console,
             log_file: self.log_file.take(),
             log_runtime: self.log_runtime,
-            log_time: self.log_time,
             time_format: self.time_format,
             system_start,
         });
@@ -367,9 +357,8 @@ fn test_debug_macro() {
     JloggerBuilder::new()
         .max_level(LevelFilter::Debug)
         .log_console(true)
-        .log_time(true)
         .log_runtime(true)
-        .log_time_format(LogTimeFormat::TimeLocal)
+        .log_time(LogTimeFormat::TimeLocal)
         .log_file("/tmp/abc")
         .build();
 
