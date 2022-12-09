@@ -352,6 +352,33 @@ macro_rules! jdebug {
     }};
 }
 
+#[macro_export]
+macro_rules! jtrace {
+    () => {
+        log::trace!(
+            "{}-{} : arrived.",
+            file!(),
+            line!(),
+        );
+    };
+    ($val:tt) => {
+        log::trace!(
+            "{}-{} : {}",
+            file!(),
+            line!(),
+            $val
+        );
+    };
+    ($fmt:expr,$($val:expr),*) => {{
+        log::trace!(
+            "{}-{} : {}",
+            file!(),
+            line!(),
+            format!($fmt, $($val),*)
+        );
+    }};
+}
+
 #[test]
 fn test_debug_macro() {
     use log::{debug, info};
