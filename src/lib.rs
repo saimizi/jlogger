@@ -19,6 +19,7 @@ pub struct Jlogger {
     log_runtime: bool,
     time_format: LogTimeFormat,
     system_start: i64,
+    max_level: LevelFilter,
 }
 
 impl Jlogger {
@@ -41,8 +42,8 @@ impl Jlogger {
 
 impl Log for Jlogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        if let Ok(level) = std::env::var("JLOGGER_LEVEL") {
-            let level = match level.as_str() {
+        let level = if let Ok(l) = std::env::var("JLOGGER_LEVEL") {
+            match l.as_str() {
                 "off" => LevelFilter::Off,
                 "error" => LevelFilter::Error,
                 "warn" => LevelFilter::Warn,
@@ -50,12 +51,12 @@ impl Log for Jlogger {
                 "debug" => LevelFilter::Debug,
                 "trace" => LevelFilter::Trace,
                 _ => LevelFilter::Off,
-            };
+            }
+        } else {
+            self.max_level
+        };
 
-            return metadata.level() <= level;
-        }
-
-        true
+        metadata.level() <= level
     }
 
     fn log(&self, record: &Record) {
@@ -235,9 +236,10 @@ impl JloggerBuilder {
             log_runtime: self.log_runtime,
             time_format: self.time_format,
             system_start,
+            max_level: self.max_level,
         });
 
-        log::set_max_level(self.max_level);
+        log::set_max_level(LevelFilter::Trace);
         log::set_boxed_logger(logger).unwrap();
     }
 }
