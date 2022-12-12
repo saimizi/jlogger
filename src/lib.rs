@@ -126,7 +126,7 @@ impl JloggerBuilder {
     ///        .max_level(LevelFilter::Debug)
     ///        .log_console(true)
     ///        .log_time(LogTimeFormat::TimeStamp)
-    ///        .log_file("/tmp/my_log.log")
+    ///        .log_file(Some("/tmp/my_log.log"), false)
     ///        .build();
     ///
     /// ```
@@ -157,15 +157,23 @@ impl JloggerBuilder {
 
     /// Log file name.
     /// If specified, log message will be outputted to it.
-    pub fn log_file(mut self, log_file: &str) -> Self {
-        self.log_file = Some(RwLock::new(
-            fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .write(true)
-                .open(log_file)
-                .unwrap(),
-        ));
+    /// If append is true and the log file exists, new messages well be appended to the end of the
+    /// file. Otherwise, a new log file will be created.
+    pub fn log_file(mut self, log_file: Option<&str>, append: bool) -> Self {
+        if let Some(log_file) = log_file {
+            if !append {
+                let _ = fs::remove_file(log_file);
+            }
+
+            self.log_file = Some(RwLock::new(
+                fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .append(true)
+                    .open(log_file)
+                    .unwrap(),
+            ));
+        }
 
         self
     }
@@ -386,7 +394,7 @@ fn test_debug_macro() {
         .log_console(true)
         .log_runtime(true)
         .log_time(LogTimeFormat::TimeLocal)
-        .log_file("/tmp/abc")
+        .log_file(Some("/tmp/abc"), false)
         .build();
 
     jdebug!("test: {}", String::from("hello"));
