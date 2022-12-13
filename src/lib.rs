@@ -1,6 +1,7 @@
 //! A simple log utility.
 
 use std::fs::{self, File};
+use std::io::{BufRead, BufReader};
 use std::sync::RwLock;
 use tracing_subscriber::filter::LevelFilter as TraceLevelFilter;
 use tracing_subscriber::fmt::MakeWriter;
@@ -91,7 +92,70 @@ impl<'a> MakeWriter<'a> for JloggerMakeWriter {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd)]
+struct JloggerTimer {
+    time_format: LogTimeFormat,
+    system_start: i64,
+}
+
+impl JloggerTimer {
+    fn new(time_format: LogTimeFormat) -> Self {
+        let now = chrono::Local::now().timestamp();
+
+        let system_start = if let Ok(f) = fs::OpenOptions::new()
+            .create(false)
+            .write(false)
+            .read(true)
+            .open("/proc/stat")
+        {
+            let mut br = BufReader::new(f);
+
+            loop {
+                let mut buf = String::new();
+                if let Ok(n) = br.read_line(&mut buf) {
+                    if n == 0 {
+                        break now;
+                    }
+
+                    if buf.starts_with("btime") {
+                        let v: Vec<&str> = buf.split_whitespace().into_iter().collect();
+                        break v[1].parse::<i64>().unwrap();
+                    }
+                }
+            }
+        } else {
+            now
+        };
+
+        Self {
+            time_format,
+            system_start,
+        }
+    }
+}
+
+impl tracing_subscriber::fmt::time::FormatTime for JloggerTimer {
+    fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
+        let time_str = match self.time_format {
+            LogTimeFormat::TimeNone => "".to_owned(),
+            LogTimeFormat::TimeStamp => {
+                let now = chrono::Local::now();
+                format!(
+                    "{}.{:<09}",
+                    now.timestamp() - self.system_start,
+                    now.timestamp_nanos() % 1000000000
+                )
+            }
+            LogTimeFormat::TimeLocal => {
+                let now = chrono::Local::now();
+                format!("{}", now.format("%Y-%m-%d %H:%M:%S"))
+            }
+        };
+
+        w.write_str(time_str.as_str())
+    }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Clone, Copy)]
 pub enum LogTimeFormat {
     TimeStamp,
     TimeLocal,
@@ -222,20 +286,14 @@ impl JloggerBuilder {
             log_console: self.log_console,
         };
 
-        if self.time_format == LogTimeFormat::TimeNone {
-            tracing_subscriber::fmt()
-                .with_writer(make_writer)
-                .with_target(self.log_runtime)
-                .with_max_level(TraceLevelFilter::from(self.max_level))
-                .without_time()
-                .init();
-        } else {
-            tracing_subscriber::fmt()
-                .with_writer(make_writer)
-                .with_target(self.log_runtime)
-                .with_max_level(TraceLevelFilter::from(self.max_level))
-                .init();
-        }
+        let timer = JloggerTimer::new(self.time_format);
+
+        tracing_subscriber::fmt()
+            .with_writer(make_writer)
+            .with_timer(timer)
+            .with_target(self.log_runtime)
+            .with_max_level(TraceLevelFilter::from(self.max_level))
+            .init();
     }
 }
 

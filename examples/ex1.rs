@@ -39,7 +39,7 @@ pub fn main() {
         .log_file(cli.log_file.as_ref().map(|a| (a.as_str(), false)))
         .log_console(log_console)
         .log_runtime(true)
-        .log_time(LogTimeFormat::TimeLocal)
+        .log_time(LogTimeFormat::TimeStamp)
         .build();
 
     log::info!("{}", function_name!());
