@@ -1,6 +1,14 @@
+use clap::Parser;
+use function_name::named;
 #[allow(unused)]
 use jlogger::{jdebug, jerror, jinfo, jtrace, jwarn, JloggerBuilder};
-use function_name::named;
+
+#[derive(Parser, Debug)]
+/// Jlogger example program.
+struct Cli {
+    #[clap(short, long)]
+    log_file: Option<String>,
+}
 
 #[named]
 pub fn level1() {
@@ -21,8 +29,11 @@ pub fn level3() {
 
 #[named]
 pub fn main() {
+    let cli = Cli::parse();
+
     JloggerBuilder::new()
         .max_level(log::LevelFilter::Trace)
+        .log_file(cli.log_file.as_deref(), false)
         .log_runtime(true)
         .log_time(jlogger::LogTimeFormat::TimeLocal)
         .build();
