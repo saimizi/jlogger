@@ -6,7 +6,7 @@ use std::sync::RwLock;
 use tracing_subscriber::filter::LevelFilter as TraceLevelFilter;
 use tracing_subscriber::fmt::MakeWriter;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Clone, Copy)]
 pub enum LevelFilter {
     OFF,
     ERROR,
@@ -25,6 +25,20 @@ impl From<LevelFilter> for TraceLevelFilter {
             LevelFilter::INFO => TraceLevelFilter::INFO,
             LevelFilter::DEBUG => TraceLevelFilter::DEBUG,
             LevelFilter::TRACE => TraceLevelFilter::TRACE,
+        }
+    }
+}
+
+impl From<String> for LevelFilter {
+    fn from(s: String) -> Self {
+        match s.as_str() {
+            "off" => LevelFilter::OFF,
+            "error" => LevelFilter::ERROR,
+            "warn" => LevelFilter::WARN,
+            "info" => LevelFilter::INFO,
+            "debug" => LevelFilter::DEBUG,
+            "trace" => LevelFilter::TRACE,
+            _ => LevelFilter::OFF,
         }
     }
 }
@@ -207,7 +221,13 @@ impl JloggerBuilder {
     /// Log messages with a level below it will not be outputted.
     /// At runtime, the log level can be filtered though "JLOGGER_LEVEL" environment variable.
     pub fn max_level(mut self, max_level: LevelFilter) -> Self {
-        self.max_level = max_level;
+        let level = if let Ok(l) = std::env::var("JLOGGER_LEVEL") {
+            LevelFilter::from(l)
+        } else {
+            max_level
+        };
+
+        self.max_level = level;
         self
     }
 
