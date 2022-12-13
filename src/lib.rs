@@ -1,109 +1,108 @@
 //! A simple log utility.
 
-use log::{self, LevelFilter, Log, Metadata, Record};
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Write};
 use std::sync::RwLock;
+use tracing_subscriber::filter::LevelFilter as TraceLevelFilter;
+use tracing_subscriber::fmt::MakeWriter;
 
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
+pub enum LevelFilter {
+    OFF,
+    ERROR,
+    WARN,
+    INFO,
+    DEBUG,
+    TRACE,
+}
+
+impl From<LevelFilter> for TraceLevelFilter {
+    fn from(level: LevelFilter) -> Self {
+        match level {
+            LevelFilter::OFF => TraceLevelFilter::OFF,
+            LevelFilter::ERROR => TraceLevelFilter::ERROR,
+            LevelFilter::WARN => TraceLevelFilter::WARN,
+            LevelFilter::INFO => TraceLevelFilter::INFO,
+            LevelFilter::DEBUG => TraceLevelFilter::DEBUG,
+            LevelFilter::TRACE => TraceLevelFilter::TRACE,
+        }
+    }
+}
+
+struct JloggerWriter<'a> {
+    log_file: Option<&'a RwLock<File>>,
+    log_console: bool,
+}
+
+impl<'a> std::io::Write for JloggerWriter<'a> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let write_file = self
+            .log_file
+            .map_or(Ok(0), |fw| fw.write().unwrap().write(buf))?;
+
+        let write_console = if self.log_console {
+            std::io::stderr().write(buf)?
+        } else {
+            0_usize
+        };
+
+        if write_file > 0 && write_console > 0 {
+            Ok(usize::min(write_file, write_console))
+        } else if write_file > 0 {
+            Ok(write_file)
+        } else if write_console > 0 {
+            Ok(write_console)
+        } else {
+            Ok(buf.len())
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if let Some(lock_writer) = &self.log_file {
+            lock_writer.write().unwrap().flush()?;
+        }
+
+        if self.log_console {
+            std::io::stderr().flush()
+        } else {
+            Ok(())
+        }
+    }
+}
+
+struct JloggerMakeWriter {
+    log_file: Option<RwLock<File>>,
+    log_console: bool,
+}
+
+impl<'a> MakeWriter<'a> for JloggerMakeWriter {
+    type Writer = JloggerWriter<'a>;
+    fn make_writer(&'a self) -> Self::Writer {
+        if let Some(rw) = &self.log_file {
+            JloggerWriter {
+                log_file: Some(rw),
+                log_console: self.log_console,
+            }
+        } else {
+            JloggerWriter {
+                log_file: None,
+                log_console: self.log_console,
+            }
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, PartialOrd)]
 pub enum LogTimeFormat {
     TimeStamp,
     TimeLocal,
     TimeNone,
 }
 
-pub struct Jlogger {
-    log_console: bool,
-    log_file: Option<RwLock<File>>,
-    log_runtime: bool,
-    time_format: LogTimeFormat,
-    system_start: i64,
-    max_level: LevelFilter,
-}
-
-impl Jlogger {
-    fn runtime() -> String {
-        std::thread::current()
-            .name()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                let exe_cmd = std::env::current_exe().unwrap();
-                exe_cmd
-                    .as_path()
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .to_string()
-            })
-    }
-}
-
-impl Log for Jlogger {
-    fn enabled(&self, metadata: &Metadata) -> bool {
-        let level = if let Ok(l) = std::env::var("JLOGGER_LEVEL") {
-            match l.as_str() {
-                "off" => LevelFilter::Off,
-                "error" => LevelFilter::Error,
-                "warn" => LevelFilter::Warn,
-                "info" => LevelFilter::Info,
-                "debug" => LevelFilter::Debug,
-                "trace" => LevelFilter::Trace,
-                _ => LevelFilter::Off,
-            }
-        } else {
-            self.max_level
-        };
-
-        metadata.level() <= level
-    }
-
-    fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            let mut log_message = String::new();
-
-            let now = chrono::Local::now();
-            match self.time_format {
-                LogTimeFormat::TimeStamp => log_message.push_str({
-                    format!(
-                        "{}.{:<09} ",
-                        now.timestamp() - self.system_start,
-                        now.timestamp_nanos() % 1000000000
-                    )
-                    .as_str()
-                }),
-                LogTimeFormat::TimeLocal => {
-                    log_message.push_str(format!("{} ", now.format("%Y-%m-%d %H:%M:%S")).as_str())
-                }
-
-                LogTimeFormat::TimeNone => {}
-            }
-
-            log_message.push_str(format!("{:5} ", record.level()).as_str());
-
-            if self.log_runtime {
-                log_message.push_str(format!("{} ", Jlogger::runtime()).as_str());
-            }
-
-            log_message.push_str(format!(": {}", record.args()).as_str());
-
-            if self.log_console {
-                eprintln!("{}", log_message);
-            }
-
-            if let Some(f) = &self.log_file {
-                let mut fw = f.write().unwrap();
-                writeln!(fw, "{}", log_message).unwrap();
-            }
-        }
-    }
-
-    fn flush(&self) {}
-}
-
 pub struct JloggerBuilder {
     max_level: LevelFilter,
     log_console: bool,
-    log_file: Option<RwLock<File>>,
+    log_file: Option<String>,
+    log_file_append: bool,
     log_runtime: bool,
     time_format: LogTimeFormat,
 }
@@ -132,9 +131,10 @@ impl JloggerBuilder {
     /// ```
     pub fn new() -> Self {
         JloggerBuilder {
-            max_level: LevelFilter::Info,
+            max_level: LevelFilter::INFO,
             log_console: true,
             log_file: None,
+            log_file_append: true,
             log_runtime: false,
             time_format: LogTimeFormat::TimeNone,
         }
@@ -157,22 +157,13 @@ impl JloggerBuilder {
 
     /// Log file name.
     /// If specified, log message will be outputted to it.
-    /// If append is true and the log file exists, new messages well be appended to the end of the
-    /// file. Otherwise, a new log file will be created.
-    pub fn log_file(mut self, log_file: Option<&str>, append: bool) -> Self {
-        if let Some(log_file) = log_file {
-            if !append {
-                let _ = fs::remove_file(log_file);
-            }
-
-            self.log_file = Some(RwLock::new(
-                fs::OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .append(true)
-                    .open(log_file)
-                    .unwrap(),
-            ));
+    /// A tuple (log_file: &str, append: bool) is used to specify the log file.
+    /// if "append" is true and the log file already exists, the log message will be appended to
+    /// the log file. Otherwise a new log file will be created.
+    pub fn log_file(mut self, log_file: Option<(&str, bool)>) -> Self {
+        if let Some((log_file, append)) = log_file {
+            self.log_file = Some(log_file.to_string());
+            self.log_file_append = append;
         }
 
         self
@@ -208,59 +199,58 @@ impl JloggerBuilder {
     }
 
     /// Build a Jlogger.
-    pub fn build(mut self) {
-        let now = chrono::Local::now().timestamp();
-        let system_start = {
-            if let Ok(f) = fs::OpenOptions::new()
-                .create(false)
-                .write(false)
-                .read(true)
-                .open("/proc/stat")
-            {
-                let mut br = BufReader::new(f);
-                loop {
-                    let mut buf = String::new();
-                    if let Ok(n) = br.read_line(&mut buf) {
-                        if n == 0 {
-                            break now;
-                        }
-
-                        if buf.starts_with("btime") {
-                            let v: Vec<&str> = buf.split_whitespace().into_iter().collect();
-                            break v[1].parse::<i64>().unwrap();
-                        }
-                    }
-                }
-            } else {
-                now
+    pub fn build(self) {
+        let log_file = if let Some(log) = &self.log_file {
+            if !self.log_file_append {
+                let _ = fs::remove_file(log);
             }
+
+            Some(RwLock::new(
+                fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .append(true)
+                    .read(true)
+                    .open(log)
+                    .unwrap(),
+            ))
+        } else {
+            None
         };
 
-        let logger = Box::new(Jlogger {
+        let make_writer = JloggerMakeWriter {
+            log_file,
             log_console: self.log_console,
-            log_file: self.log_file.take(),
-            log_runtime: self.log_runtime,
-            time_format: self.time_format,
-            system_start,
-            max_level: self.max_level,
-        });
+        };
 
-        log::set_max_level(LevelFilter::Trace);
-        log::set_boxed_logger(logger).unwrap();
+        if self.time_format == LogTimeFormat::TimeNone {
+            tracing_subscriber::fmt()
+                .with_writer(make_writer)
+                .with_target(self.log_runtime)
+                .with_max_level(TraceLevelFilter::from(self.max_level))
+                .without_time()
+                .init();
+        } else {
+            tracing_subscriber::fmt()
+                .with_writer(make_writer)
+                .with_target(self.log_runtime)
+                .with_max_level(TraceLevelFilter::from(self.max_level))
+                .init();
+        }
     }
 }
 
 #[macro_export]
 macro_rules! jerror{
     () => {
-        log::error!(
+        tracing::error!(
             "{}-{} : arrived.",
             file!(),
             line!(),
         );
     };
     ($val:tt) => {
-        log::error!(
+        tracing::error!(
             "{}-{} : {}",
             file!(),
             line!(),
@@ -268,7 +258,7 @@ macro_rules! jerror{
         );
     };
     ($fmt:expr,$($val:expr),*) => {{
-        log::error!(
+        tracing::error!(
             "{}-{} : {}",
             file!(),
             line!(),
@@ -280,14 +270,14 @@ macro_rules! jerror{
 #[macro_export]
 macro_rules! jwarn{
     () => {
-        log::warn!(
+        tracing::warn!(
             "{}-{} : arrived.",
             file!(),
             line!(),
         );
     };
     ($val:tt) => {
-        log::warn!(
+        tracing::warn!(
             "{}-{} : {}",
             file!(),
             line!(),
@@ -295,7 +285,7 @@ macro_rules! jwarn{
         );
     };
     ($fmt:expr,$($val:expr),*) => {{
-        log::warn!(
+        tracing::warn!(
             "{}-{} : {}",
             file!(),
             line!(),
@@ -307,14 +297,14 @@ macro_rules! jwarn{
 #[macro_export]
 macro_rules! jinfo{
     () => {
-        log::info!(
+        tracing::info!(
             "{}-{} : arrived.",
             file!(),
             line!(),
         );
     };
     ($val:tt) => {
-        log::info!(
+        tracing::info!(
             "{}-{} : {}",
             file!(),
             line!(),
@@ -322,7 +312,7 @@ macro_rules! jinfo{
         );
     };
     ($fmt:expr,$($val:expr),*) => {{
-        log::info!(
+        tracing::info!(
             "{}-{} : {}",
             file!(),
             line!(),
@@ -334,14 +324,14 @@ macro_rules! jinfo{
 #[macro_export]
 macro_rules! jdebug {
     () => {
-        log::debug!(
+        tracing::debug!(
             "{}-{} : arrived.",
             file!(),
             line!(),
         );
     };
     ($val:tt) => {
-        log::debug!(
+        tracing::debug!(
             "{}-{} : {}",
             file!(),
             line!(),
@@ -349,7 +339,7 @@ macro_rules! jdebug {
         );
     };
     ($fmt:expr,$($val:expr),*) => {{
-        log::debug!(
+        tracing::debug!(
             "{}-{} : {}",
             file!(),
             line!(),
@@ -361,14 +351,14 @@ macro_rules! jdebug {
 #[macro_export]
 macro_rules! jtrace {
     () => {
-        log::trace!(
+        tracing::trace!(
             "{}-{} : arrived.",
             file!(),
             line!(),
         );
     };
     ($val:tt) => {
-        log::trace!(
+        tracing::trace!(
             "{}-{} : {}",
             file!(),
             line!(),
@@ -376,7 +366,7 @@ macro_rules! jtrace {
         );
     };
     ($fmt:expr,$($val:expr),*) => {{
-        log::trace!(
+        tracing::trace!(
             "{}-{} : {}",
             file!(),
             line!(),
@@ -387,14 +377,14 @@ macro_rules! jtrace {
 
 #[test]
 fn test_debug_macro() {
-    use log::{debug, info};
+    use tracing::{debug, info};
 
     JloggerBuilder::new()
-        .max_level(LevelFilter::Debug)
+        .max_level(LevelFilter::DEBUG)
         .log_console(true)
         .log_runtime(true)
         .log_time(LogTimeFormat::TimeLocal)
-        .log_file(Some("/tmp/abc"), false)
+        .log_file(Some(("/tmp/abc", false)))
         .build();
 
     jdebug!("test: {}", String::from("hello"));
@@ -403,7 +393,7 @@ fn test_debug_macro() {
     std::thread::Builder::new()
         .name("thread1".to_string())
         .spawn(|| {
-            log::debug!(
+            debug!(
                 "this is debug in the thread {}.",
                 std::thread::current().name().unwrap()
             );
@@ -416,7 +406,7 @@ fn test_debug_macro() {
     jerror!("this is error");
     jinfo!("this is info");
     std::thread::spawn(|| {
-        log::debug!(
+        debug!(
             "this is debug in the thread {}.",
             std::thread::current()
                 .name()
