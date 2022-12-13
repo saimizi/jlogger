@@ -62,12 +62,12 @@ struct Cli {
 #[named]
 pub fn level1() {
     let _level1_span = span!(tracing::Level::INFO, "level1_span").entered();
-    jinfo!("{}", function_name!());
+    jtrace!("{}", function_name!());
 }
 
 #[named]
 pub fn level2() {
-    jinfo!("{}", function_name!());
+    jtrace!("{}", function_name!());
     level1();
 }
 
@@ -75,7 +75,7 @@ pub fn level2() {
 pub fn level3() {
     let _level3_span = span!(tracing::Level::INFO, "level3_span").entered();
 
-    info!(f_name = function_name!(), line = line!(), msg = "hello");
+    debug!(f_name = function_name!(), line = line!(), msg = "hello");
     level2();
 }
 
@@ -84,8 +84,10 @@ pub fn main() {
     let cli = Cli::parse();
     let log_console = cli.log_file.is_none();
 
+    // By default, max log level is info.
+    // use "JLOGGER_LEVEL=trace" to control the log output at runtime.
     JloggerBuilder::new()
-        .max_level(LevelFilter::TRACE)
+        .max_level(LevelFilter::INFO)
         .log_file(cli.log_file.as_ref().map(|a| (a.as_str(), false)))
         .log_console(log_console)
         .log_runtime(true)
