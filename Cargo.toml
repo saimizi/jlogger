@@ -1,6 +1,6 @@
 [package]
 name = "jlogger"
-version = "0.1.6"
+version = "0.1.7"
 authors = ["Seimizu Joukan <saimizi@gmail.com>"]
 description = "A simple log utility."
 repository = "https://github.com/saimizi/jlogger.git"
