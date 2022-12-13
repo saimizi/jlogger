@@ -118,14 +118,13 @@ impl JloggerBuilder {
     ///
     /// # Examples
     /// ```
-    ///     use log::LevelFilter;
-    ///     use jlogger::{JloggerBuilder, LogTimeFormat};
+    ///     use jlogger_tracing::{JloggerBuilder, LogTimeFormat, LevelFilter};
     ///
     ///     JloggerBuilder::new()
-    ///        .max_level(LevelFilter::Debug)
+    ///        .max_level(LevelFilter::DEBUG)
     ///        .log_console(true)
     ///        .log_time(LogTimeFormat::TimeStamp)
-    ///        .log_file(Some("/tmp/my_log.log"), false)
+    ///        .log_file(Some(("/tmp/my_log.log", false)))
     ///        .build();
     ///
     /// ```
