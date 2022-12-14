@@ -87,6 +87,7 @@ impl<'a> std::io::Write for JloggerWriter<'a> {
 struct JloggerMakeWriter {
     log_file: Option<RwLock<File>>,
     log_console: bool,
+    max_level: TraceLevelFilter,
 }
 
 impl<'a> MakeWriter<'a> for JloggerMakeWriter {
@@ -101,6 +102,23 @@ impl<'a> MakeWriter<'a> for JloggerMakeWriter {
             JloggerWriter {
                 log_file: None,
                 log_console: self.log_console,
+            }
+        }
+    }
+
+    fn make_writer_for(&'a self, meta: &tracing::Metadata<'_>) -> Self::Writer {
+        let level = if let Ok(l) = std::env::var("JLOGGER_LEVEL") {
+            LevelFilter::from(l).into()
+        } else {
+            self.max_level
+        };
+
+        if meta.level() <= &level {
+            self.make_writer()
+        } else {
+            JloggerWriter {
+                log_file: None,
+                log_console: false,
             }
         }
     }
@@ -177,7 +195,7 @@ pub enum LogTimeFormat {
 }
 
 pub struct JloggerBuilder {
-    max_level: LevelFilter,
+    max_level: TraceLevelFilter,
     log_console: bool,
     log_file: Option<String>,
     log_file_append: bool,
@@ -208,7 +226,7 @@ impl JloggerBuilder {
     /// ```
     pub fn new() -> Self {
         JloggerBuilder {
-            max_level: LevelFilter::INFO,
+            max_level: TraceLevelFilter::INFO,
             log_console: true,
             log_file: None,
             log_file_append: true,
@@ -221,13 +239,7 @@ impl JloggerBuilder {
     /// Log messages with a level below it will not be outputted.
     /// At runtime, the log level can be filtered though "JLOGGER_LEVEL" environment variable.
     pub fn max_level(mut self, max_level: LevelFilter) -> Self {
-        let level = if let Ok(l) = std::env::var("JLOGGER_LEVEL") {
-            LevelFilter::from(l)
-        } else {
-            max_level
-        };
-
-        self.max_level = level;
+        self.max_level = max_level.into();
         self
     }
 
@@ -304,6 +316,7 @@ impl JloggerBuilder {
         let make_writer = JloggerMakeWriter {
             log_file,
             log_console: self.log_console,
+            max_level: self.max_level,
         };
 
         let timer = JloggerTimer::new(self.time_format);
@@ -312,7 +325,7 @@ impl JloggerBuilder {
             .with_writer(make_writer)
             .with_timer(timer)
             .with_target(self.log_runtime)
-            .with_max_level(TraceLevelFilter::from(self.max_level))
+            .with_max_level(TraceLevelFilter::TRACE)
             .init();
     }
 }
