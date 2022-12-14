@@ -1,13 +1,14 @@
 use std::fs;
 use std::io::{BufRead, BufReader};
 
-#[derive(PartialEq, Eq, PartialOrd, Clone, Copy)]
+#[derive(PartialEq, Eq, PartialOrd, Clone, Copy, Debug)]
 pub enum LogTimeFormat {
     TimeStamp,
     TimeLocal,
     TimeNone,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct JloggerTimer {
     time_format: LogTimeFormat,
     system_start: i64,

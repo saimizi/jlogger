@@ -1,8 +1,10 @@
 //! A simple log utility.
 
 use std::fs;
-use std::sync::RwLock;
 use tracing_subscriber::filter::LevelFilter as TraceLevelFilter;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::Layer;
 
 pub use tracing::debug as jdebug;
 pub use tracing::error as jerror;
@@ -18,8 +20,7 @@ pub use timer::LogTimeFormat;
 mod level;
 pub use level::LevelFilter;
 
-mod writer;
-use writer::JloggerMakeWriter;
+use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 
 pub struct JloggerBuilder<'a> {
     max_level: TraceLevelFilter,
@@ -132,33 +133,51 @@ impl<'a> JloggerBuilder<'a> {
 
     /// Build a Jlogger.
     pub fn build(self) {
-        let log_file = if let Some(log) = &self.log_file {
+        let timer = JloggerTimer::new(self.time_format);
+
+        let mut layers = Vec::new();
+        if self.log_console {
+            layers.push(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::stderr)
+                    .with_timer(timer)
+                    .with_target(self.log_runtime)
+                    .with_span_events(self.span_event.clone())
+                    .boxed(),
+            );
+        }
+
+        if let Some(log) = &self.log_file {
             if !self.log_file_append {
                 let _ = fs::remove_file(log);
             }
 
-            Some(RwLock::new(
-                fs::OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .append(true)
-                    .read(true)
-                    .open(log)
-                    .unwrap(),
-            ))
-        } else {
-            None
-        };
+            let writer = fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(true)
+                .read(true)
+                .open(log)
+                .unwrap();
 
-        let make_writer = JloggerMakeWriter::new(log_file, self.log_console, self.max_level);
-        let timer = JloggerTimer::new(self.time_format);
+            layers.push(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(writer)
+                    .with_timer(timer)
+                    .with_target(self.log_runtime)
+                    .with_span_events(self.span_event.clone())
+                    .boxed(),
+            );
+        }
 
-        tracing_subscriber::fmt()
-            .with_writer(make_writer)
-            .with_timer(timer)
-            .with_target(self.log_runtime)
-            .with_span_events(self.span_event)
-            .with_max_level(TraceLevelFilter::TRACE)
+        let env_filter = EnvFilter::builder()
+            .with_default_directive(self.max_level.into())
+            .with_env_var("JLOGGER")
+            .from_env_lossy();
+
+        tracing_subscriber::registry()
+            .with(layers)
+            .with(env_filter)
             .init();
     }
 }
@@ -168,7 +187,7 @@ fn test_debug_macro() {
     use tracing::{debug, error, info};
 
     JloggerBuilder::new()
-        .max_level(LevelFilter::DEBUG)
+        .max_level(LevelFilter::TRACE)
         .log_console(true)
         .log_runtime(true)
         .log_time(LogTimeFormat::TimeLocal)
