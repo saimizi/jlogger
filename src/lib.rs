@@ -1,204 +1,25 @@
 //! A simple log utility.
 
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::fs;
 use std::sync::RwLock;
 use tracing_subscriber::filter::LevelFilter as TraceLevelFilter;
-use tracing_subscriber::fmt::MakeWriter;
 
 pub use tracing::debug as jdebug;
 pub use tracing::error as jerror;
 pub use tracing::info as jinfo;
 pub use tracing::trace as jtrace;
 pub use tracing::warn as jwarn;
+pub use tracing_subscriber::fmt::format::FmtSpan;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Clone, Copy)]
-pub enum LevelFilter {
-    OFF,
-    ERROR,
-    WARN,
-    INFO,
-    DEBUG,
-    TRACE,
-}
+mod timer;
+use timer::JloggerTimer;
+pub use timer::LogTimeFormat;
 
-impl From<LevelFilter> for TraceLevelFilter {
-    fn from(level: LevelFilter) -> Self {
-        match level {
-            LevelFilter::OFF => TraceLevelFilter::OFF,
-            LevelFilter::ERROR => TraceLevelFilter::ERROR,
-            LevelFilter::WARN => TraceLevelFilter::WARN,
-            LevelFilter::INFO => TraceLevelFilter::INFO,
-            LevelFilter::DEBUG => TraceLevelFilter::DEBUG,
-            LevelFilter::TRACE => TraceLevelFilter::TRACE,
-        }
-    }
-}
+mod level;
+pub use level::LevelFilter;
 
-impl From<String> for LevelFilter {
-    fn from(s: String) -> Self {
-        match s.as_str() {
-            "off" => LevelFilter::OFF,
-            "error" => LevelFilter::ERROR,
-            "warn" => LevelFilter::WARN,
-            "info" => LevelFilter::INFO,
-            "debug" => LevelFilter::DEBUG,
-            "trace" => LevelFilter::TRACE,
-            _ => LevelFilter::OFF,
-        }
-    }
-}
-
-struct JloggerWriter<'a> {
-    log_file: Option<&'a RwLock<File>>,
-    log_console: bool,
-}
-
-impl<'a> std::io::Write for JloggerWriter<'a> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let write_file = self
-            .log_file
-            .map_or(Ok(0), |fw| fw.write().unwrap().write(buf))?;
-
-        let write_console = if self.log_console {
-            std::io::stderr().write(buf)?
-        } else {
-            0_usize
-        };
-
-        if write_file > 0 && write_console > 0 {
-            Ok(usize::min(write_file, write_console))
-        } else if write_file > 0 {
-            Ok(write_file)
-        } else if write_console > 0 {
-            Ok(write_console)
-        } else {
-            Ok(buf.len())
-        }
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        if let Some(lock_writer) = &self.log_file {
-            lock_writer.write().unwrap().flush()?;
-        }
-
-        if self.log_console {
-            std::io::stderr().flush()
-        } else {
-            Ok(())
-        }
-    }
-}
-
-struct JloggerMakeWriter {
-    log_file: Option<RwLock<File>>,
-    log_console: bool,
-    max_level: TraceLevelFilter,
-}
-
-impl<'a> MakeWriter<'a> for JloggerMakeWriter {
-    type Writer = JloggerWriter<'a>;
-    fn make_writer(&'a self) -> Self::Writer {
-        if let Some(rw) = &self.log_file {
-            JloggerWriter {
-                log_file: Some(rw),
-                log_console: self.log_console,
-            }
-        } else {
-            JloggerWriter {
-                log_file: None,
-                log_console: self.log_console,
-            }
-        }
-    }
-
-    fn make_writer_for(&'a self, meta: &tracing::Metadata<'_>) -> Self::Writer {
-        let level = if let Ok(l) = std::env::var("JLOGGER_LEVEL") {
-            LevelFilter::from(l).into()
-        } else {
-            self.max_level
-        };
-
-        if meta.level() <= &level {
-            self.make_writer()
-        } else {
-            JloggerWriter {
-                log_file: None,
-                log_console: false,
-            }
-        }
-    }
-}
-
-struct JloggerTimer {
-    time_format: LogTimeFormat,
-    system_start: i64,
-}
-
-impl JloggerTimer {
-    fn new(time_format: LogTimeFormat) -> Self {
-        let now = chrono::Local::now().timestamp();
-
-        let system_start = if let Ok(f) = fs::OpenOptions::new()
-            .create(false)
-            .write(false)
-            .read(true)
-            .open("/proc/stat")
-        {
-            let mut br = BufReader::new(f);
-
-            loop {
-                let mut buf = String::new();
-                if let Ok(n) = br.read_line(&mut buf) {
-                    if n == 0 {
-                        break now;
-                    }
-
-                    if buf.starts_with("btime") {
-                        let v: Vec<&str> = buf.split_whitespace().into_iter().collect();
-                        break v[1].parse::<i64>().unwrap();
-                    }
-                }
-            }
-        } else {
-            now
-        };
-
-        Self {
-            time_format,
-            system_start,
-        }
-    }
-}
-
-impl tracing_subscriber::fmt::time::FormatTime for JloggerTimer {
-    fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
-        let time_str = match self.time_format {
-            LogTimeFormat::TimeNone => "".to_owned(),
-            LogTimeFormat::TimeStamp => {
-                let now = chrono::Local::now();
-                format!(
-                    "{}.{:<09}",
-                    now.timestamp() - self.system_start,
-                    now.timestamp_nanos() % 1000000000
-                )
-            }
-            LogTimeFormat::TimeLocal => {
-                let now = chrono::Local::now();
-                format!("{}", now.format("%Y-%m-%d %H:%M:%S"))
-            }
-        };
-
-        w.write_str(time_str.as_str())
-    }
-}
-
-#[derive(PartialEq, Eq, PartialOrd, Clone, Copy)]
-pub enum LogTimeFormat {
-    TimeStamp,
-    TimeLocal,
-    TimeNone,
-}
+mod writer;
+use writer::JloggerMakeWriter;
 
 pub struct JloggerBuilder {
     max_level: TraceLevelFilter,
@@ -207,6 +28,7 @@ pub struct JloggerBuilder {
     log_file_append: bool,
     log_runtime: bool,
     time_format: LogTimeFormat,
+    span_event: FmtSpan,
 }
 
 impl Default for JloggerBuilder {
@@ -238,6 +60,7 @@ impl JloggerBuilder {
             log_file_append: true,
             log_runtime: false,
             time_format: LogTimeFormat::TimeNone,
+            span_event: FmtSpan::NONE,
         }
     }
 
@@ -299,6 +122,14 @@ impl JloggerBuilder {
         self
     }
 
+    /// Enable tracing span event.
+    /// See tracing_subscriber::fmt::format::FmtSpan for detail
+    /// This only take affect when tracing::Span is used.
+    pub fn tracing_span_event(mut self, span: FmtSpan) -> Self {
+        self.span_event = span;
+        self
+    }
+
     /// Build a Jlogger.
     pub fn build(self) {
         let log_file = if let Some(log) = &self.log_file {
@@ -319,18 +150,14 @@ impl JloggerBuilder {
             None
         };
 
-        let make_writer = JloggerMakeWriter {
-            log_file,
-            log_console: self.log_console,
-            max_level: self.max_level,
-        };
-
+        let make_writer = JloggerMakeWriter::new(log_file, self.log_console, self.max_level);
         let timer = JloggerTimer::new(self.time_format);
 
         tracing_subscriber::fmt()
             .with_writer(make_writer)
             .with_timer(timer)
             .with_target(self.log_runtime)
+            .with_span_events(self.span_event)
             .with_max_level(TraceLevelFilter::TRACE)
             .init();
     }
