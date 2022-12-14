@@ -21,23 +21,23 @@ pub use level::LevelFilter;
 mod writer;
 use writer::JloggerMakeWriter;
 
-pub struct JloggerBuilder {
+pub struct JloggerBuilder<'a> {
     max_level: TraceLevelFilter,
     log_console: bool,
-    log_file: Option<String>,
+    log_file: Option<&'a str>,
     log_file_append: bool,
     log_runtime: bool,
     time_format: LogTimeFormat,
     span_event: FmtSpan,
 }
 
-impl Default for JloggerBuilder {
+impl<'a> Default for JloggerBuilder<'a> {
     fn default() -> Self {
         JloggerBuilder::new()
     }
 }
 
-impl JloggerBuilder {
+impl<'a> JloggerBuilder<'a> {
     /// Create a new JloggerBuilder which is used to build a Jlogger.
     ///
     /// # Examples
@@ -84,9 +84,9 @@ impl JloggerBuilder {
     /// A tuple (log_file: &str, append: bool) is used to specify the log file.
     /// if "append" is true and the log file already exists, the log message will be appended to
     /// the log file. Otherwise a new log file will be created.
-    pub fn log_file(mut self, log_file: Option<(&str, bool)>) -> Self {
+    pub fn log_file(mut self, log_file: Option<(&'a str, bool)>) -> Self {
         if let Some((log_file, append)) = log_file {
-            self.log_file = Some(log_file.to_string());
+            self.log_file = Some(log_file);
             self.log_file_append = append;
         }
 
