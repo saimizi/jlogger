@@ -6,6 +6,12 @@ use std::sync::RwLock;
 use tracing_subscriber::filter::LevelFilter as TraceLevelFilter;
 use tracing_subscriber::fmt::MakeWriter;
 
+pub use tracing::debug as jdebug;
+pub use tracing::error as jerror;
+pub use tracing::info as jinfo;
+pub use tracing::trace as jtrace;
+pub use tracing::warn as jwarn;
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Clone, Copy)]
 pub enum LevelFilter {
     OFF,
@@ -330,144 +336,9 @@ impl JloggerBuilder {
     }
 }
 
-#[macro_export]
-macro_rules! jerror{
-    () => {
-        tracing::error!(
-            "{}-{} : arrived.",
-            file!(),
-            line!(),
-        );
-    };
-    ($val:tt) => {
-        tracing::error!(
-            "{}-{} : {}",
-            file!(),
-            line!(),
-            $val
-        );
-    };
-    ($fmt:expr,$($val:expr),*) => {{
-        tracing::error!(
-            "{}-{} : {}",
-            file!(),
-            line!(),
-            format!($fmt, $($val),*)
-        );
-    }};
-}
-
-#[macro_export]
-macro_rules! jwarn{
-    () => {
-        tracing::warn!(
-            "{}-{} : arrived.",
-            file!(),
-            line!(),
-        );
-    };
-    ($val:tt) => {
-        tracing::warn!(
-            "{}-{} : {}",
-            file!(),
-            line!(),
-            $val
-        );
-    };
-    ($fmt:expr,$($val:expr),*) => {{
-        tracing::warn!(
-            "{}-{} : {}",
-            file!(),
-            line!(),
-            format!($fmt, $($val),*)
-        );
-    }};
-}
-
-#[macro_export]
-macro_rules! jinfo{
-    () => {
-        tracing::info!(
-            "{}-{} : arrived.",
-            file!(),
-            line!(),
-        );
-    };
-    ($val:tt) => {
-        tracing::info!(
-            "{}-{} : {}",
-            file!(),
-            line!(),
-            $val
-        );
-    };
-    ($fmt:expr,$($val:expr),*) => {{
-        tracing::info!(
-            "{}-{} : {}",
-            file!(),
-            line!(),
-            format!($fmt, $($val),*)
-        );
-    }};
-}
-
-#[macro_export]
-macro_rules! jdebug {
-    () => {
-        tracing::debug!(
-            "{}-{} : arrived.",
-            file!(),
-            line!(),
-        );
-    };
-    ($val:tt) => {
-        tracing::debug!(
-            "{}-{} : {}",
-            file!(),
-            line!(),
-            $val
-        );
-    };
-    ($fmt:expr,$($val:expr),*) => {{
-        tracing::debug!(
-            "{}-{} : {}",
-            file!(),
-            line!(),
-            format!($fmt, $($val),*)
-        );
-    }};
-}
-
-#[macro_export]
-macro_rules! jtrace {
-    () => {
-        tracing::trace!(
-            "{}-{} : arrived.",
-            file!(),
-            line!(),
-        );
-    };
-    ($val:tt) => {
-        tracing::trace!(
-            "{}-{} : {}",
-            file!(),
-            line!(),
-            $val
-        );
-    };
-    ($fmt:expr,$($val:expr),*) => {{
-        tracing::trace!(
-            "{}-{} : {}",
-            file!(),
-            line!(),
-            format!($fmt, $($val),*)
-        );
-    }};
-}
-
 #[test]
 fn test_debug_macro() {
-    use tracing::{debug, info};
+    use tracing::{debug, error, info};
 
     JloggerBuilder::new()
         .max_level(LevelFilter::DEBUG)
@@ -477,8 +348,8 @@ fn test_debug_macro() {
         .log_file(Some(("/tmp/abc", false)))
         .build();
 
-    jdebug!("test: {}", String::from("hello"));
-    jdebug!("this is debug");
+    jdebug!("{} - {} test: {}", file!(), line!(), String::from("hello"));
+    debug!("this is debug");
 
     std::thread::Builder::new()
         .name("thread1".to_string())
@@ -487,13 +358,14 @@ fn test_debug_macro() {
                 "this is debug in the thread {}.",
                 std::thread::current().name().unwrap()
             );
-            jinfo!("this is info in the thread.");
+            info!("this is info in the thread.");
         })
         .unwrap()
         .join()
         .unwrap();
 
-    jerror!("this is error");
+    jerror!(file = file!(), l = line!(), msg = "this is error");
+    error!(file = file!(), l = line!(), msg = "this is another error");
     jinfo!("this is info");
     std::thread::spawn(|| {
         debug!(
@@ -502,11 +374,10 @@ fn test_debug_macro() {
                 .name()
                 .unwrap_or("No thread name set"),
         );
-        jinfo!("this is info in the thread.");
+        info!("this is info in the thread.");
     })
     .join()
     .unwrap();
     info!("this is info");
-    jdebug!();
     debug!("default");
 }
